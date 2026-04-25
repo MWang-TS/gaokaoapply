@@ -1,0 +1,562 @@
+[
+  {
+    "id": "fudan",
+    "name": "复旦大学",
+    "shortName": "复旦",
+    "province": "上海",
+    "city": "上海",
+    "type": "综合",
+    "is985": true,
+    "is211": true,
+    "isDoubleFirstClass": true,
+    "website": "https://www.fudan.edu.cn",
+    "majors": [
+      {
+        "code": "080901",
+        "name": "计算机科学与技术",
+        "enrollmentCount": 120,
+        "tuition": 5500,
+        "duration": 4,
+        "requirements": ["物理", "化学"],
+        "scores": [
+          { "year": 2024, "minScore": 626, "minRank": 312 },
+          { "year": 2023, "minScore": 621, "minRank": 398 },
+          { "year": 2022, "minScore": 619, "minRank": 421 }
+        ]
+      },
+      {
+        "code": "100101",
+        "name": "临床医学",
+        "enrollmentCount": 80,
+        "tuition": 5500,
+        "duration": 5,
+        "requirements": ["物理", "化学", "生物"],
+        "scores": [
+          { "year": 2024, "minScore": 632, "minRank": 198 },
+          { "year": 2023, "minScore": 628, "minRank": 241 },
+          { "year": 2022, "minScore": 624, "minRank": 287 }
+        ]
+      },
+      {
+        "code": "020101",
+        "name": "经济学",
+        "enrollmentCount": 60,
+        "tuition": 5500,
+        "duration": 4,
+        "requirements": [],
+        "scores": [
+          { "year": 2024, "minScore": 622, "minRank": 378 },
+          { "year": 2023, "minScore": 618, "minRank": 452 },
+          { "year": 2022, "minScore": 615, "minRank": 498 }
+        ]
+      },
+      {
+        "code": "030101",
+        "name": "法学",
+        "enrollmentCount": 40,
+        "tuition": 5500,
+        "duration": 4,
+        "requirements": [],
+        "scores": [
+          { "year": 2024, "minScore": 618, "minRank": 452 },
+          { "year": 2023, "minScore": 614, "minRank": 521 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "sjtu",
+    "name": "上海交通大学",
+    "shortName": "交大",
+    "province": "上海",
+    "city": "上海",
+    "type": "综合",
+    "is985": true,
+    "is211": true,
+    "isDoubleFirstClass": true,
+    "website": "https://www.sjtu.edu.cn",
+    "majors": [
+      {
+        "code": "080901",
+        "name": "计算机科学与技术",
+        "enrollmentCount": 150,
+        "tuition": 5500,
+        "duration": 4,
+        "requirements": ["物理"],
+        "scores": [
+          { "year": 2024, "minScore": 629, "minRank": 241 },
+          { "year": 2023, "minScore": 624, "minRank": 298 },
+          { "year": 2022, "minScore": 621, "minRank": 341 }
+        ]
+      },
+      {
+        "code": "080201",
+        "name": "机械工程",
+        "enrollmentCount": 100,
+        "tuition": 5500,
+        "duration": 4,
+        "requirements": ["物理"],
+        "scores": [
+          { "year": 2024, "minScore": 608, "minRank": 712 },
+          { "year": 2023, "minScore": 603, "minRank": 798 },
+          { "year": 2022, "minScore": 601, "minRank": 841 }
+        ]
+      },
+      {
+        "code": "100101",
+        "name": "临床医学（八年制）",
+        "enrollmentCount": 30,
+        "tuition": 5500,
+        "duration": 8,
+        "requirements": ["物理", "化学", "生物"],
+        "scores": [
+          { "year": 2024, "minScore": 635, "minRank": 156 },
+          { "year": 2023, "minScore": 631, "minRank": 187 }
+        ]
+      },
+      {
+        "code": "120200",
+        "name": "工商管理",
+        "enrollmentCount": 60,
+        "tuition": 5500,
+        "duration": 4,
+        "requirements": [],
+        "scores": [
+          { "year": 2024, "minScore": 612, "minRank": 634 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "tongji",
+    "name": "同济大学",
+    "shortName": "同济",
+    "province": "上海",
+    "city": "上海",
+    "type": "理工",
+    "is985": true,
+    "is211": true,
+    "isDoubleFirstClass": true,
+    "website": "https://www.tongji.edu.cn",
+    "majors": [
+      {
+        "code": "081001",
+        "name": "土木工程",
+        "enrollmentCount": 200,
+        "tuition": 5500,
+        "duration": 4,
+        "requirements": ["物理"],
+        "scores": [
+          { "year": 2024, "minScore": 589, "minRank": 1821 },
+          { "year": 2023, "minScore": 585, "minRank": 2001 },
+          { "year": 2022, "minScore": 582, "minRank": 2189 }
+        ]
+      },
+      {
+        "code": "081002",
+        "name": "建筑学",
+        "enrollmentCount": 80,
+        "tuition": 6500,
+        "duration": 5,
+        "requirements": ["物理"],
+        "scores": [
+          { "year": 2024, "minScore": 598, "minRank": 1189 },
+          { "year": 2023, "minScore": 593, "minRank": 1342 }
+        ]
+      },
+      {
+        "code": "080901",
+        "name": "计算机科学与技术",
+        "enrollmentCount": 80,
+        "tuition": 5500,
+        "duration": 4,
+        "requirements": ["物理"],
+        "scores": [
+          { "year": 2024, "minScore": 601, "minRank": 1012 },
+          { "year": 2023, "minScore": 597, "minRank": 1134 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ecnu",
+    "name": "华东师范大学",
+    "shortName": "华师大",
+    "province": "上海",
+    "city": "上海",
+    "type": "师范",
+    "is985": true,
+    "is211": true,
+    "isDoubleFirstClass": true,
+    "website": "https://www.ecnu.edu.cn",
+    "majors": [
+      {
+        "code": "040101",
+        "name": "教育学",
+        "enrollmentCount": 60,
+        "tuition": 5000,
+        "duration": 4,
+        "requirements": [],
+        "scores": [
+          { "year": 2024, "minScore": 581, "minRank": 2634 },
+          { "year": 2023, "minScore": 577, "minRank": 2891 }
+        ]
+      },
+      {
+        "code": "080901",
+        "name": "计算机科学与技术",
+        "enrollmentCount": 60,
+        "tuition": 5000,
+        "duration": 4,
+        "requirements": ["物理"],
+        "scores": [
+          { "year": 2024, "minScore": 592, "minRank": 1621 },
+          { "year": 2023, "minScore": 588, "minRank": 1789 }
+        ]
+      },
+      {
+        "code": "071001",
+        "name": "数学与应用数学",
+        "enrollmentCount": 60,
+        "tuition": 5000,
+        "duration": 4,
+        "requirements": ["物理"],
+        "scores": [
+          { "year": 2024, "minScore": 578, "minRank": 2934 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "sufe",
+    "name": "上海财经大学",
+    "shortName": "上财",
+    "province": "上海",
+    "city": "上海",
+    "type": "财经",
+    "is985": false,
+    "is211": true,
+    "isDoubleFirstClass": true,
+    "website": "https://www.sufe.edu.cn",
+    "majors": [
+      {
+        "code": "020101",
+        "name": "经济学",
+        "enrollmentCount": 80,
+        "tuition": 5000,
+        "duration": 4,
+        "requirements": [],
+        "scores": [
+          { "year": 2024, "minScore": 598, "minRank": 1189 },
+          { "year": 2023, "minScore": 594, "minRank": 1312 },
+          { "year": 2022, "minScore": 591, "minRank": 1456 }
+        ]
+      },
+      {
+        "code": "120201",
+        "name": "工商管理（会计学）",
+        "enrollmentCount": 100,
+        "tuition": 5000,
+        "duration": 4,
+        "requirements": [],
+        "scores": [
+          { "year": 2024, "minScore": 594, "minRank": 1398 },
+          { "year": 2023, "minScore": 590, "minRank": 1521 }
+        ]
+      },
+      {
+        "code": "020204",
+        "name": "金融学",
+        "enrollmentCount": 80,
+        "tuition": 5000,
+        "duration": 4,
+        "requirements": [],
+        "scores": [
+          { "year": 2024, "minScore": 601, "minRank": 1012 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ecust",
+    "name": "华东理工大学",
+    "shortName": "华理",
+    "province": "上海",
+    "city": "上海",
+    "type": "理工",
+    "is985": false,
+    "is211": true,
+    "isDoubleFirstClass": true,
+    "website": "https://www.ecust.edu.cn",
+    "majors": [
+      {
+        "code": "081101",
+        "name": "化学工程与工艺",
+        "enrollmentCount": 120,
+        "tuition": 5000,
+        "duration": 4,
+        "requirements": ["物理", "化学"],
+        "scores": [
+          { "year": 2024, "minScore": 561, "minRank": 5621 },
+          { "year": 2023, "minScore": 557, "minRank": 6012 }
+        ]
+      },
+      {
+        "code": "080901",
+        "name": "计算机科学与技术",
+        "enrollmentCount": 60,
+        "tuition": 5000,
+        "duration": 4,
+        "requirements": ["物理"],
+        "scores": [
+          { "year": 2024, "minScore": 572, "minRank": 3987 },
+          { "year": 2023, "minScore": 568, "minRank": 4231 }
+        ]
+      },
+      {
+        "code": "120204",
+        "name": "工商管理",
+        "enrollmentCount": 60,
+        "tuition": 5000,
+        "duration": 4,
+        "requirements": [],
+        "scores": [
+          { "year": 2024, "minScore": 558, "minRank": 6134 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "dhu",
+    "name": "东华大学",
+    "shortName": "东华",
+    "province": "上海",
+    "city": "上海",
+    "type": "理工",
+    "is985": false,
+    "is211": true,
+    "isDoubleFirstClass": false,
+    "website": "https://www.dhu.edu.cn",
+    "majors": [
+      {
+        "code": "060501",
+        "name": "纺织工程",
+        "enrollmentCount": 100,
+        "tuition": 4800,
+        "duration": 4,
+        "requirements": ["物理"],
+        "scores": [
+          { "year": 2024, "minScore": 541, "minRank": 9821 },
+          { "year": 2023, "minScore": 537, "minRank": 10234 }
+        ]
+      },
+      {
+        "code": "080901",
+        "name": "计算机科学与技术",
+        "enrollmentCount": 60,
+        "tuition": 4800,
+        "duration": 4,
+        "requirements": ["物理"],
+        "scores": [
+          { "year": 2024, "minScore": 558, "minRank": 6234 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "shu",
+    "name": "上海大学",
+    "shortName": "上大",
+    "province": "上海",
+    "city": "上海",
+    "type": "综合",
+    "is985": false,
+    "is211": true,
+    "isDoubleFirstClass": false,
+    "website": "https://www.shu.edu.cn",
+    "majors": [
+      {
+        "code": "080901",
+        "name": "计算机科学与技术",
+        "enrollmentCount": 100,
+        "tuition": 4500,
+        "duration": 4,
+        "requirements": ["物理"],
+        "scores": [
+          { "year": 2024, "minScore": 554, "minRank": 7123 },
+          { "year": 2023, "minScore": 550, "minRank": 7589 }
+        ]
+      },
+      {
+        "code": "080202",
+        "name": "机械设计制造及其自动化",
+        "enrollmentCount": 80,
+        "tuition": 4500,
+        "duration": 4,
+        "requirements": ["物理"],
+        "scores": [
+          { "year": 2024, "minScore": 543, "minRank": 9234 }
+        ]
+      },
+      {
+        "code": "020101",
+        "name": "经济学",
+        "enrollmentCount": 60,
+        "tuition": 4500,
+        "duration": 4,
+        "requirements": [],
+        "scores": [
+          { "year": 2024, "minScore": 548, "minRank": 8312 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "shnu",
+    "name": "上海师范大学",
+    "shortName": "上师大",
+    "province": "上海",
+    "city": "上海",
+    "type": "师范",
+    "is985": false,
+    "is211": false,
+    "isDoubleFirstClass": false,
+    "website": "https://www.shnu.edu.cn",
+    "majors": [
+      {
+        "code": "040101",
+        "name": "教育学",
+        "enrollmentCount": 60,
+        "tuition": 4200,
+        "duration": 4,
+        "requirements": [],
+        "scores": [
+          { "year": 2024, "minScore": 531, "minRank": 12456 },
+          { "year": 2023, "minScore": 527, "minRank": 13021 }
+        ]
+      },
+      {
+        "code": "050101",
+        "name": "汉语言文学（师范）",
+        "enrollmentCount": 80,
+        "tuition": 4200,
+        "duration": 4,
+        "requirements": [],
+        "scores": [
+          { "year": 2024, "minScore": 525, "minRank": 13987 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "sisu",
+    "name": "上海外国语大学",
+    "shortName": "上外",
+    "province": "上海",
+    "city": "上海",
+    "type": "语言",
+    "is985": false,
+    "is211": true,
+    "isDoubleFirstClass": true,
+    "website": "https://www.shisu.edu.cn",
+    "majors": [
+      {
+        "code": "050201",
+        "name": "英语",
+        "enrollmentCount": 80,
+        "tuition": 5000,
+        "duration": 4,
+        "requirements": [],
+        "scores": [
+          { "year": 2024, "minScore": 587, "minRank": 2089 },
+          { "year": 2023, "minScore": 583, "minRank": 2234 }
+        ]
+      },
+      {
+        "code": "050261",
+        "name": "翻译",
+        "enrollmentCount": 40,
+        "tuition": 5000,
+        "duration": 4,
+        "requirements": [],
+        "scores": [
+          { "year": 2024, "minScore": 583, "minRank": 2312 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "shutcm",
+    "name": "上海中医药大学",
+    "shortName": "上中医",
+    "province": "上海",
+    "city": "上海",
+    "type": "医学",
+    "is985": false,
+    "is211": false,
+    "isDoubleFirstClass": true,
+    "website": "https://www.shutcm.edu.cn",
+    "majors": [
+      {
+        "code": "100501",
+        "name": "中医学",
+        "enrollmentCount": 100,
+        "tuition": 5000,
+        "duration": 5,
+        "requirements": ["化学", "生物"],
+        "scores": [
+          { "year": 2024, "minScore": 568, "minRank": 4398 },
+          { "year": 2023, "minScore": 563, "minRank": 4721 }
+        ]
+      },
+      {
+        "code": "100601",
+        "name": "中西医临床医学",
+        "enrollmentCount": 40,
+        "tuition": 5000,
+        "duration": 5,
+        "requirements": ["化学", "生物"],
+        "scores": [
+          { "year": 2024, "minScore": 574, "minRank": 3521 }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "usst",
+    "name": "上海理工大学",
+    "shortName": "上理工",
+    "province": "上海",
+    "city": "上海",
+    "type": "理工",
+    "is985": false,
+    "is211": false,
+    "isDoubleFirstClass": false,
+    "website": "https://www.usst.edu.cn",
+    "majors": [
+      {
+        "code": "080202",
+        "name": "机械设计制造及其自动化",
+        "enrollmentCount": 120,
+        "tuition": 4500,
+        "duration": 4,
+        "requirements": ["物理"],
+        "scores": [
+          { "year": 2024, "minScore": 529, "minRank": 14234 },
+          { "year": 2023, "minScore": 525, "minRank": 15012 }
+        ]
+      },
+      {
+        "code": "080401",
+        "name": "材料科学与工程",
+        "enrollmentCount": 60,
+        "tuition": 4500,
+        "duration": 4,
+        "requirements": ["物理", "化学"],
+        "scores": [
+          { "year": 2024, "minScore": 523, "minRank": 15678 }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,26 @@
+# Node
+node_modules/
+dist/
+
+# Rust / Tauri
+target/
+src-tauri/target/
+
+# Vite
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Env
+.env
+.env.*
