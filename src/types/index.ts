@@ -76,3 +76,18 @@ export interface GaokaoMajor {
     minRank: number;
   }[];
 }
+
+// PDF Import types
+export interface PdfCutoffEntry {
+  code: string;
+  name: string;
+  cutoff: number | string;
+}
+
+export interface PdfCutoffData {
+  title: string;
+  year: number;
+  province: string;
+  note?: string;
+  data: PdfCutoffEntry[];
+}

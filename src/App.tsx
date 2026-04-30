@@ -12,6 +12,7 @@ import type {
   Skill,
   McpServer,
   GaokaoSchool,
+  PdfCutoffEntry,
 } from "./types";
 import zhangxuefengRaw from "./data/skills/zhangxuefeng.md?raw";
 import shanghaiSchools from "./data/gaokao/shanghai_schools.json";
@@ -1553,6 +1554,14 @@ function DataView({ schools }: { schools: GaokaoSchool[] }) {
     null
   );
   const [scoreFilter, setScoreFilter] = useState<number | null>(null);
+  // PDF Import states
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importPreview, setImportPreview] = useState<PdfCutoffEntry[] | null>(null);
+  const [importTitle, setImportTitle] = useState("");
+  const [importYear, setImportYear] = useState(2025);
+  const [importProvince, setImportProvince] = useState("上海");
 
   const types = ["全部", ...Array.from(new Set(schools.map((s) => s.type)))];
 
@@ -1572,6 +1581,199 @@ function DataView({ schools }: { schools: GaokaoSchool[] }) {
       );
     return matchSearch && matchType && match985 && match211 && matchScore;
   });
+
+  // PDF Import handler
+  const handleImportPdf = async () => {
+    console.log("Import PDF button clicked");
+    try {
+      setImporting(true);
+      setImportError(null);
+      setImportProgress("正在选择文件...");
+
+      // Open file picker via Tauri
+      console.log("Calling open_file_dialog...");
+      const selected = await invoke<{ filePath: string } | null>("open_file_dialog", {
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+        multiple: false,
+      });
+      console.log("open_file_dialog result:", selected);
+
+      if (!selected) {
+        console.log("selected is falsy, returning early");
+        setImporting(false);
+        return;
+      }
+      if (!selected.filePath) {
+        console.log("selected.filePath is falsy, returning early. filePath:", selected.filePath);
+        setImporting(false);
+        return;
+      }
+
+      setImportProgress("正在解析 PDF，请稍候...");
+
+      // Call Rust backend to parse PDF
+      console.log("Calling import_pdf_cutoffs with path:", selected.filePath);
+      const result = await invoke<PdfCutoffData>("import_pdf_cutoffs", {
+        pdfPath: selected.filePath,
+        year: importYear,
+        province: importProvince,
+      });
+      console.log("import_pdf_cutoffs result:", result);
+
+      setImportTitle(result.title);
+      setImportPreview(result.data);
+      setImportProgress("");
+    } catch (err) {
+      console.error("PDF import error:", err);
+      setImportError(String(err));
+      setImporting(false);
+    }
+  };
+
+  const handleConfirmImport = async () => {
+    if (!importPreview) return;
+
+    try {
+      setImporting(true);
+      setImportProgress("正在保存数据...");
+
+      // Save to gaokao data file
+      await invoke("save_gaokao_data", {
+        dataType: "shanghai_2025_cutoffs",
+        data: {
+          title: importTitle,
+          year: importYear,
+          province: importProvince,
+          note: importPreview.length > 0 ? "由 PDF 导入生成" : "",
+          data: importPreview,
+        },
+      });
+
+      // Close preview and reload page to reflect changes
+      setImportPreview(null);
+      setImportTitle("");
+      window.location.reload(); // Simple refresh to reload data
+    } catch (err) {
+      setImportError(String(err));
+      setImporting(false);
+    }
+  };
+
+  const handleCancelImport = () => {
+    setImportPreview(null);
+    setImportError(null);
+  };
+
+  // Import preview modal
+  if (importPreview !== null) {
+    return (
+      <div className="import-modal-overlay" onClick={handleCancelImport}>
+        <div className="import-modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="panel-header">
+            <div>
+              <h2>📄 PDF 导入预览</h2>
+              <p style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>
+                {importTitle}
+              </p>
+            </div>
+          </div>
+
+          <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-color)" }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <label style={{ fontSize: 13 }}>
+                年份：
+                <input
+                  type="number"
+                  className="form-input"
+                  style={{ width: 80 }}
+                  value={importYear}
+                  onChange={(e) => setImportYear(parseInt(e.target.value) || 2025)}
+                />
+              </label>
+              <label style={{ fontSize: 13 }}>
+                省份：
+                <input
+                  className="form-input"
+                  style={{ width: 120 }}
+                  value={importProvince}
+                  onChange={(e) => setImportProvince(e.target.value)}
+                />
+              </label>
+            </div>
+          </div>
+
+          {importError && (
+            <div style={{ padding: "12px 20px", background: "var(--bg-error)", color: "var(--color-error)", fontSize: 13 }}>
+              {importError}
+            </div>
+          )}
+
+          {importProgress && (
+            <div style={{ padding: "12px 20px", background: "var(--bg-info)", color: "var(--color-info)", fontSize: 13 }}>
+              {importProgress}
+            </div>
+          )}
+
+          <div style={{ padding: "16px 20px", maxHeight: 400, overflowY: "auto" }}>
+            <div style={{ marginBottom: 12, fontSize: 13, color: "var(--text-secondary)" }}>
+              解析到 {importPreview.length} 条记录。请确认数据格式正确：
+            </div>
+            <table className="data-table" style={{ fontSize: 12 }}>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>院校代码</th>
+                  <th>院校专业组</th>
+                  <th>投档线</th>
+                </tr>
+              </thead>
+              <tbody>
+                {importPreview.slice(0, 50).map((entry, idx) => (
+                  <tr key={idx}>
+                    <td>{idx + 1}</td>
+                    <td><code>{entry.code}</code></td>
+                    <td>{entry.name}</td>
+                    <td>
+                      {typeof entry.cutoff === "number"
+                        ? <strong>{entry.cutoff}分</strong>
+                        : <span style={{ color: "var(--color-warning)" }}>{entry.cutoff}</span>
+                      }
+                    </td>
+                  </tr>
+                ))}
+                {importPreview.length > 50 && (
+                  <tr>
+                    <td colSpan={4} style={{ textAlign: "center", color: "var(--text-secondary)" }}>
+                      ... 还有 {importPreview.length - 50} 条记录
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{
+            padding: "12px 20px",
+            background: "var(--bg-secondary)",
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 8
+          }}>
+            <button className="btn btn-ghost" onClick={handleCancelImport}>
+              取消
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={handleConfirmImport}
+              disabled={importing || importPreview.length === 0}
+            >
+              {importing ? "⏳ 保存中..." : "✅ 确认导入"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (selectedSchool) {
     return (
@@ -1718,6 +1920,14 @@ function DataView({ schools }: { schools: GaokaoSchool[] }) {
               清除
             </button>
           )}
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={handleImportPdf}
+            disabled={importing}
+            title="从 PDF 导入分数线数据"
+          >
+            {importing ? "⏳ 导入中..." : "📄 导入 PDF"}
+          </button>
         </div>
       </div>
 

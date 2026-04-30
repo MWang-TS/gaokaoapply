@@ -1097,3 +1097,51 @@ details[open] .thinking-summary::before {
   line-height: 1.6;
   max-width: 400px;
 }
+
+/* ─── PDF Import Modal ──────────────────────────────────────────── */
+.import-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.import-modal-content {
+  background: var(--color-bg);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+  max-width: 700px;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.import-modal .panel-header {
+  flex-shrink: 0;
+}
+
+.import-modal .data-table {
+  font-size: 12px;
+}
+
+.import-modal .data-table th,
+.import-modal .data-table td {
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.import-modal code {
+  background: var(--bg-secondary);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--color-accent);
+}
