@@ -38,9 +38,16 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
 
+      - name: List bundle artifacts
+        run: |
+          echo "=== bundle dir ==="
+          Get-ChildItem -Recurse "src-tauri/target/x86_64-pc-windows-msvc/release/bundle" -ErrorAction SilentlyContinue | Select-Object FullName
+        shell: pwsh
+
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
+          fail_on_unmatched_files: false
           files: |
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
