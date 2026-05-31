@@ -22,36 +22,20 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install NSIS
-        run: choco install nsis -y
-        shell: pwsh
-
-      - name: Build Tauri app
-        run: npm run tauri build
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ""
-
-      - name: List bundle artifacts
-        run: |
-          echo "=== bundle dir ==="
-          Get-ChildItem -Recurse "src-tauri/target/release/bundle" -ErrorAction SilentlyContinue | Select-Object FullName
-        shell: pwsh
-
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v2
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          fail_on_unmatched_files: false
-          files: |
-            src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.msi
+          tagName: ${{ github.ref_name }}
+          releaseName: 'GaokaoApply ${{ github.ref_name }}'
+          releaseBody: '高考报志愿助手 ${{ github.ref_name }} Windows 安装包'
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: false
