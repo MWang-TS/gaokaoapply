@@ -40,8 +40,10 @@ jobs:
 
       - name: List bundle artifacts
         run: |
-          echo "=== bundle dir ==="
+          echo "=== release dir ==="
           Get-ChildItem -Recurse "src-tauri/target/x86_64-pc-windows-msvc/release/bundle" -ErrorAction SilentlyContinue | Select-Object FullName
+          echo "=== top-level release ==="
+          Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release" -ErrorAction SilentlyContinue | Select-Object Name, Length
         shell: pwsh
 
       - name: Upload to Release
@@ -49,5 +51,5 @@ jobs:
         with:
           fail_on_unmatched_files: false
           files: |
-            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.msi
