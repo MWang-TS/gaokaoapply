@@ -47,6 +47,10 @@ pub struct CutoffData {
     pub province: String,
     pub note: Option<String>,
     pub data: Vec<CutoffEntry>,
+    /// First ~3000 chars of raw extracted text, for debugging
+    pub raw_text_sample: Option<String>,
+    /// Set when text extraction succeeded but parsing found 0 entries
+    pub parse_warning: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -123,6 +127,10 @@ mod mcp {
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null());
+
+            // Prevent a console window from appearing on Windows
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
             let mut child = cmd.spawn().map_err(|e| format!("Failed to start MCP: {}", e))?;
             let stdin = child.stdin.take().ok_or("no stdin")?;
@@ -254,7 +262,6 @@ mod commands {
     use regex::Regex;
     use reqwest::Client;
     use tauri::Emitter;
-    use pdf::content::{Op, TextDrawAdjusted};
 
     #[tauri::command]
     pub async fn mcp_get_tools(
@@ -721,6 +728,56 @@ mod commands {
         Ok(())
     }
 
+    #[tauri::command]
+    pub fn list_gaokao_data(app: tauri::AppHandle) -> Vec<serde_json::Value> {
+        let dir = app_data_dir(&app).join("gaokao");
+        let mut result = Vec::new();
+        if !dir.exists() {
+            return result;
+        }
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map_or(false, |e| e == "json") {
+                    let key = path
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                            let title = v.get("title").and_then(|t| t.as_str()).unwrap_or(&key).to_string();
+                            let year = v.get("year").and_then(|y| y.as_u64()).unwrap_or(0);
+                            let province = v.get("province").and_then(|p| p.as_str()).unwrap_or("").to_string();
+                            let count = v.get("data").and_then(|d| d.as_array()).map(|a| a.len()).unwrap_or(0);
+                            result.push(serde_json::json!({
+                                "key": key,
+                                "title": title,
+                                "year": year,
+                                "province": province,
+                                "count": count
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    #[tauri::command]
+    pub fn delete_gaokao_data(
+        app: tauri::AppHandle,
+        data_type: String,
+    ) -> Result<(), String> {
+        let path = app_data_dir(&app)
+            .join("gaokao")
+            .join(format!("{}.json", data_type));
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     // 上海2025年高考综合成绩一分一段表 (本科线=402)
     // 来源: sh.bendibao.com, 数据截止 2025年
     // 格式: (分数, 累计人数/位次)
@@ -819,46 +876,101 @@ mod commands {
         }
     }
 
-    /// Parse PDF text to extract cutoff data
-    /// Expected format: 院校代码 院校名称(专业组) 投档线
-    /// Examples: "10101 复旦大学(01) 580" or "10101 复旦大学(01) 580分及以上"
+    /// Check if a char is a CJK character
+    fn is_cjk(c: char) -> bool {
+        matches!(c, '\u{4e00}'..='\u{9fff}')
+    }
+
+    /// Remove isolated single CJK chars (PDF watermarks) from a string.
+    /// Chars that are not adjacent to another CJK char are considered watermarks.
+    fn remove_isolated_cjk(s: &str) -> String {
+        let chars: Vec<char> = s.chars().collect();
+        let n = chars.len();
+        let mut result = String::new();
+        let mut i = 0;
+        while i < n {
+            let c = chars[i];
+            if is_cjk(c) {
+                let prev_cjk = i > 0 && is_cjk(chars[i - 1]);
+                let next_cjk = i + 1 < n && is_cjk(chars[i + 1]);
+                if !prev_cjk && !next_cjk {
+                    // Isolated single CJK — watermark, skip
+                    i += 1;
+                    continue;
+                }
+            }
+            result.push(c);
+            i += 1;
+        }
+        // Collapse multiple spaces
+        let mut out = String::new();
+        let mut prev_space = false;
+        for c in result.chars() {
+            if c == ' ' || c == '\t' {
+                if !prev_space { out.push(' '); }
+                prev_space = true;
+            } else {
+                out.push(c);
+                prev_space = false;
+            }
+        }
+        out.trim().to_string()
+    }
+
+    /// Parse PDF text to extract cutoff data.
+    /// Handles watermark single-chars mixed into data lines.
     fn parse_cutoff_lines(text: &str, _year: u32, _province: &str) -> Vec<CutoffEntry> {
         let mut entries = Vec::new();
-        let lines: Vec<&str> = text.lines().collect();
+        // Match optional leading watermark char + 5-digit school code at line start
+        let re_code = Regex::new(r"^[\u{4e00}-\u{9fff}]?(\d{5,})").unwrap();
 
-        // Pattern 1: "代码 名称 分数" (space/tab separated)
-        // Shanghai format typically: 10101 复旦大学(01) 580
-        let re_line = Regex::new(r"^(\d{5,})\s+([^\d]+?)\s+(\d+分?及以上|\d+)$").unwrap();
-
-        for line in lines {
+        for line in text.lines() {
             let line = line.trim();
-            if line.is_empty() || line.len() < 10 {
-                continue;
-            }
+            if line.len() < 8 { continue; }
 
-            if let Some(caps) = re_line.captures(line) {
-                let code = caps.get(1).unwrap().as_str().trim().to_string();
-                let name = caps.get(2).unwrap().as_str().trim().to_string();
-                let cutoff_str = caps.get(3).unwrap().as_str().trim();
+            // Must start with (optional CJK watermark +) 5+ digit code
+            let code_caps = match re_code.captures(line) {
+                Some(c) => c,
+                None => continue,
+            };
+            let code = code_caps.get(1).unwrap().as_str().to_string();
+            let rest = line[code_caps.get(0).unwrap().end()..].trim();
 
-                let cutoff: serde_json::Value = if cutoff_str.contains("分及以上") {
-                    serde_json::json!(cutoff_str)
-                } else {
-                    // Extract numeric part
-                    let num_str = cutoff_str.replace("分", "");
-                    if let Ok(num) = num_str.parse::<u32>() {
-                        serde_json::json!(num)
-                    } else {
-                        serde_json::json!(cutoff_str)
+            // Split rest into whitespace tokens
+            // Name = tokens before first 3-4 digit number in score range (300-700)
+            // Score = that first number
+            let tokens: Vec<&str> = rest.split_whitespace().collect();
+            if tokens.is_empty() { continue; }
+
+            let mut name_tokens: Vec<&str> = Vec::new();
+            let mut score: Option<u32> = None;
+
+            for token in &tokens {
+                // Pure numeric token in plausible score range?
+                if let Ok(n) = token.parse::<u32>() {
+                    if n >= 300 && n <= 700 && score.is_none() {
+                        score = Some(n);
+                        break;
                     }
-                };
-
-                entries.push(CutoffEntry {
-                    code,
-                    name,
-                    cutoff,
-                });
+                }
+                name_tokens.push(token);
             }
+
+            let Some(score_val) = score else { continue };
+
+            // Build name: join tokens, strip isolated watermark CJK chars
+            let raw_name = name_tokens.join(" ");
+            let name = remove_isolated_cjk(&raw_name);
+            if name.is_empty() { continue; }
+
+            // If the line contains "以上", treat as "NNN分及以上"
+            let cutoff: serde_json::Value = if line.contains("以上") {
+                serde_json::json!(format!("{}分及以上", score_val))
+            } else {
+                serde_json::json!(score_val)
+            };
+
+            entries.push(CutoffEntry { code, name, cutoff });
         }
 
         entries
@@ -874,16 +986,31 @@ mod commands {
         let year_val = year.unwrap_or(2025);
         let province_val = province.unwrap_or_else(|| "上海".to_string());
 
-        // Extract text from PDF using the `pdf` crate (more robust than pdf-extract)
-        let text = extract_pdf_text(&pdf_path)
+        // pdf_extract::extract_text is blocking I/O — must run off the async executor
+        let path_clone = pdf_path.clone();
+        let text = tokio::task::spawn_blocking(move || extract_pdf_text(&path_clone))
+            .await
+            .map_err(|e| format!("任务调度失败: {}", e))?
             .map_err(|e| format!("PDF解析失败: {}", e))?;
 
         // Parse cutoff entries from text
         let data = parse_cutoff_lines(&text, year_val, &province_val);
 
-        if data.is_empty() {
-            return Err("未能从PDF中解析出分数线数据，请确保PDF包含清晰的表格文本".to_string());
-        }
+        // Always include a raw text sample (first 3000 chars) so the frontend can show it
+        let raw_sample = if text.len() > 3000 {
+            format!("{}…（共{}字符）", &text[..3000], text.len())
+        } else {
+            text.clone()
+        };
+
+        let parse_warning = if data.is_empty() {
+            Some(format!(
+                "提取到 {} 行文本，但未匹配到任何分数线记录。请检查原始文本是否包含院校代码列。",
+                text.lines().count()
+            ))
+        } else {
+            None
+        };
 
         Ok(CutoffData {
             title: format!(
@@ -894,105 +1021,309 @@ mod commands {
             province: province_val,
             note: Some("580分及以上考生投档信息另行告知；部分院校Q组、中外合作办学院校专业组投档结果另行公布".to_string()),
             data,
+            raw_text_sample: Some(raw_sample),
+            parse_warning,
         })
     }
 
 
-    /// Extract plain text from a PDF using parsed content operators.
-    /// This approach avoids font encoding issues by using the parsed text operators directly
+    /// Extract plain text from a PDF.
+    /// First tries pdf-extract; if it panics (e.g. unsupported CID encoding like GBK-EUC-H),
+    /// falls back to a lopdf-based extractor that decodes bytes as GBK.
+    /// Returns true if the text looks like a legitimate Chinese document
+    /// (CJK chars make up >8% of non-whitespace content).
+    fn text_quality_ok(text: &str) -> bool {
+        let non_ws: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
+        if non_ws.is_empty() { return false; }
+        if non_ws.len() < 50 { return true; } // short text – accept as-is
+        let cjk = non_ws.iter()
+            .filter(|&&c| c >= '\u{4E00}' && c <= '\u{9FFF}')
+            .count();
+        cjk as f64 / non_ws.len() as f64 > 0.08
+    }
+
     fn extract_pdf_text(path: &str) -> Result<String, String> {
-        use pdf::file::FileOptions;
+        // Try pdf-extract (catches panics from unsupported CID encodings)
+        let path_owned = path.to_string();
+        let result = std::panic::catch_unwind(move || {
+            pdf_extract::extract_text(&path_owned)
+        });
+        if let Ok(Ok(text)) = result {
+            if text_quality_ok(&text) {
+                return Ok(text);
+            }
+        }
 
-        let doc = FileOptions::uncached().open(path).map_err(|e| e.to_string())?;
+        // Fallback 1: lopdf with ToUnicode CMap decoding
+        if let Ok(text) = extract_pdf_text_lopdf(path) {
+            if text_quality_ok(&text) {
+                return Ok(text);
+            }
+        }
 
-        let mut texts: Vec<String> = Vec::new();
-        let mut page_count = 0;
+        // Fallback 2: Python pdfplumber (most reliable for CID/CJK PDFs)
+        extract_pdf_text_python(path)
+    }
 
-        for page_res in doc.pages() {
-            let page = match page_res {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("[PDF] page error: {}", e);
-                    continue;
+    /// Use Python + pdfplumber via `uv run` (auto-installs) or system Python.
+    fn extract_pdf_text_python(path: &str) -> Result<String, String> {
+        use std::process::Command;
+        #[cfg(target_os = "windows")]
+        use std::os::windows::process::CommandExt;
+
+        // Inline Python: extract all page text and print to stdout
+        let script = format!(
+            "import pdfplumber\nwith pdfplumber.open({:?}) as _pdf:\n    print('\\n'.join(pg.extract_text() or '' for pg in _pdf.pages))\n",
+            path
+        );
+
+        let run_cmd = |cmd: &mut Command| -> Option<String> {
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            cmd.output().ok().and_then(|o| {
+                if o.status.success() {
+                    let t = String::from_utf8_lossy(&o.stdout).into_owned();
+                    if text_quality_ok(&t) { Some(t) } else { None }
+                } else {
+                    None
                 }
-            };
-            page_count += 1;
-            if let Some(content) = &page.contents {
-                match content.operations(&doc) {
-                    Ok(ops) => {
-                        for op in ops {
-                            match op {
-                                Op::TextDraw { text } => {
-                                    let s = text.to_string_lossy();
-                                    texts.push(s.to_string());
-                                }
-                                Op::TextDrawAdjusted { array } => {
-                                    for item in array {
-                                        if let TextDrawAdjusted::Text(txt) = item {
-                                            let s = txt.to_string_lossy();
-                                            texts.push(s.to_string());
-                                        }
-                                    }
-                                }
-                                _ => {}
+            })
+        };
+
+        // Try uv run (downloads pdfplumber into isolated env automatically)
+        if let Some(text) = run_cmd(
+            Command::new("uv").args(["run", "--with", "pdfplumber", "python", "-c", &script])
+        ) {
+            return Ok(text);
+        }
+
+        // Try system python / conda python
+        for py in &["python", "python3"] {
+            if let Some(text) = run_cmd(Command::new(py).args(["-c", &script])) {
+                return Ok(text);
+            }
+        }
+
+        Err("PDF文本提取失败：所有方法均无法解码该PDF（CID字体）。\n建议：pip install pdfplumber 后重试。".to_string())
+    }
+
+    /// lopdf-based PDF text extractor with ToUnicode CMap decoding.
+    /// Handles CIDFont / Identity-H encoded PDFs (common for official Chinese government PDFs).
+    fn extract_pdf_text_lopdf(path: &str) -> Result<String, String> {
+        use lopdf::{Document, Object};
+        use lopdf::content::Content;
+        use std::collections::HashMap;
+
+        type CMap = HashMap<Vec<u8>, String>;
+
+        // --- CMap helpers ---
+
+        fn parse_hex_bytes(s: &str) -> Option<Vec<u8>> {
+            let s = s.strip_prefix('<')?.strip_suffix('>')?;
+            if s.len() % 2 != 0 { return None; }
+            (0..s.len()).step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+                .collect()
+        }
+
+        fn bytes_to_u32(b: &[u8]) -> u32 {
+            b.iter().fold(0u32, |acc, &x| (acc << 8) | x as u32)
+        }
+
+        fn parse_cmap(data: &[u8]) -> CMap {
+            let text = String::from_utf8_lossy(data);
+            let mut map = CMap::new();
+            let mut in_bfchar = false;
+            let mut in_bfrange = false;
+            for line in text.lines() {
+                let line = line.trim();
+                match line {
+                    "beginbfchar"  => { in_bfchar = true;  continue; }
+                    "endbfchar"    => { in_bfchar = false; continue; }
+                    "beginbfrange" => { in_bfrange = true;  continue; }
+                    "endbfrange"   => { in_bfrange = false; continue; }
+                    _ => {}
+                }
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if in_bfchar && parts.len() >= 2 {
+                    if let (Some(src), Some(dst)) = (parse_hex_bytes(parts[0]), parse_hex_bytes(parts[1])) {
+                        if let Some(ch) = char::from_u32(bytes_to_u32(&dst)) {
+                            map.insert(src, ch.to_string());
+                        }
+                    }
+                } else if in_bfrange && parts.len() >= 3 && parts[2].starts_with('<') {
+                    if let (Some(s_b), Some(e_b), Some(d_b)) = (
+                        parse_hex_bytes(parts[0]), parse_hex_bytes(parts[1]), parse_hex_bytes(parts[2])
+                    ) {
+                        let s_val = bytes_to_u32(&s_b);
+                        let e_val = bytes_to_u32(&e_b);
+                        let d_val = bytes_to_u32(&d_b);
+                        let klen  = s_b.len();
+                        for delta in 0..=e_val.saturating_sub(s_val) {
+                            if let Some(ch) = char::from_u32(d_val + delta) {
+                                let cid = s_val + delta;
+                                let key = if klen == 1 { vec![cid as u8] } else { vec![(cid >> 8) as u8, cid as u8] };
+                                map.insert(key, ch.to_string());
                             }
                         }
                     }
-                    Err(e) => eprintln!("[PDF] ops error on page {}: {}", page_count, e),
+                }
+            }
+            map
+        }
+
+        fn decode_with_cmap(bytes: &[u8], cmap: &CMap) -> String {
+            let mut out = String::new();
+            let mut i = 0;
+            while i < bytes.len() {
+                if i + 1 < bytes.len() {
+                    let key2: &[u8] = &[bytes[i], bytes[i + 1]];
+                    if let Some(s) = cmap.get(key2) {
+                        out.push_str(s);
+                        i += 2;
+                        continue;
+                    }
+                }
+                let key1: &[u8] = &[bytes[i]];
+                if let Some(s) = cmap.get(key1) {
+                    out.push_str(s);
+                }
+                i += 1;
+            }
+            out
+        }
+
+        // --- Main extraction ---
+
+        let doc = Document::load(path).map_err(|e| format!("无法加载PDF: {}", e))?;
+        let mut all_text = String::new();
+
+        // Helper: dereference Object::Reference, returning cloned owned Object
+        let deref_obj = |obj: &Object| -> Option<Object> {
+            match obj {
+                Object::Reference(id) => doc.get_object(*id).ok().cloned(),
+                other => Some(other.clone()),
+            }
+        };
+
+        for page_id in doc.page_iter() {
+            // Build font-name -> CMap table for this page
+            let mut font_cmaps: HashMap<String, CMap> = HashMap::new();
+
+            'font_load: {
+                let page_obj  = match doc.get_object(page_id).ok().cloned() { Some(o) => o, None => break 'font_load };
+                let page_dict = match page_obj.as_dict().ok().cloned()       { Some(d) => d, None => break 'font_load };
+                let res_obj   = match page_dict.get(b"Resources").ok().and_then(|r| deref_obj(r)) { Some(o) => o, None => break 'font_load };
+                let res_dict  = match res_obj.as_dict().ok().cloned()        { Some(d) => d, None => break 'font_load };
+                let fonts_obj = match res_dict.get(b"Font").ok().and_then(|f| deref_obj(f)) { Some(o) => o, None => break 'font_load };
+                let fonts_dict = match fonts_obj.as_dict().ok().cloned()     { Some(d) => d, None => break 'font_load };
+
+                for (fname, font_ref) in fonts_dict.iter() {
+                    let font_name = String::from_utf8_lossy(fname).to_string();
+                    let font_obj  = match deref_obj(font_ref)                { Some(o) => o, None => continue };
+                    let font_dict = match font_obj.as_dict().ok().cloned()   { Some(d) => d, None => continue };
+                    let tu_ref    = match font_dict.get(b"ToUnicode").ok().cloned() { Some(r) => r, None => continue };
+                    let tu_obj    = match deref_obj(&tu_ref)                 { Some(o) => o, None => continue };
+                    if let Object::Stream(stream) = tu_obj {
+                        if let Ok(data) = stream.decompressed_content() {
+                            let cmap = parse_cmap(&data);
+                            if !cmap.is_empty() {
+                                font_cmaps.insert(font_name, cmap);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let stream_bytes = match doc.get_page_content(page_id) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            let content = match Content::decode(&stream_bytes) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let mut in_text = false;
+            let mut current_font: Option<String> = None;
+
+            for op in &content.operations {
+                match op.operator.as_str() {
+                    "BT" => { in_text = true; }
+                    "ET" => { in_text = false; all_text.push('\n'); }
+                    "Td" | "TD" | "T*" => { all_text.push('\n'); }
+                    "Tf" if in_text => {
+                        if let Some(Object::Name(name)) = op.operands.first() {
+                            current_font = Some(String::from_utf8_lossy(name).to_string());
+                        }
+                    }
+                    "Tj" | "'" if in_text => {
+                        if let Some(Object::String(bytes, _)) = op.operands.first() {
+                            if let Some(cm) = current_font.as_ref().and_then(|f| font_cmaps.get(f)) {
+                                all_text.push_str(&decode_with_cmap(bytes, cm));
+                            } else {
+                                push_pdf_string(&mut all_text, bytes);
+                            }
+                        }
+                    }
+                    "TJ" if in_text => {
+                        if let Some(Object::Array(arr)) = op.operands.first() {
+                            let cmap = current_font.as_ref().and_then(|f| font_cmaps.get(f));
+                            for item in arr {
+                                if let Object::String(bytes, _) = item {
+                                    if let Some(cm) = cmap {
+                                        all_text.push_str(&decode_with_cmap(bytes, cm));
+                                    } else {
+                                        push_pdf_string(&mut all_text, bytes);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
 
-        eprintln!("[PDF] pages: {}, texts: {}", page_count, texts.len());
-
-        if texts.is_empty() {
-            return Err("未能从PDF中提取到任何文本内容，该PDF可能是扫描件或图片".to_string());
+        if all_text.trim().is_empty() {
+            Err("PDF中未能提取到文本（可能为扫描件或加密PDF）".to_string())
+        } else {
+            Ok(all_text)
         }
+    }
 
-        let mut lines = Vec::new();
-        let mut current = String::new();
-        for s in texts {
-            let s_trim = s.trim();
-            if s_trim.is_empty() { continue; }
-            if s_trim.chars().all(|c| c.is_ascii_digit()) && s_trim.len() >= 5 {
-                if !current.is_empty() {
-                    lines.push(current.trim().to_string());
-                    current.clear();
-                }
-                current.push_str(s_trim);
-            } else {
-                if !current.is_empty() {
-                    current.push(' ');
-                }
-                current.push_str(s_trim);
+    /// Decode PDF string bytes: try GBK for high-byte sequences, else UTF-8 lossy.
+    fn push_pdf_string(out: &mut String, bytes: &[u8]) {
+        if bytes.iter().any(|&b| b > 0x7F) {
+            let (text, _, had_errors) = encoding_rs::GBK.decode(bytes);
+            if !had_errors {
+                out.push_str(&text);
+                return;
             }
         }
-        if !current.is_empty() {
-            lines.push(current.trim().to_string());
-        }
-
-        Ok(lines.join("\n"))
-        Ok(lines.join("\n"))
+        out.push_str(&String::from_utf8_lossy(bytes));
     }
 
     /// Open file dialog to select a PDF file
     #[tauri::command]
     pub async fn open_file_dialog(
-        _app: tauri::AppHandle,
+        app: tauri::AppHandle,
         _filters: Option<Vec<FileFilter>>,
         _multiple: Option<bool>,
     ) -> Result<Option<FileDialogResult>, String> {
-        // For testing: return the sample PDF path directly
-        let pdf_path = "C:\\Users\\Administrator\\workspace\\gaokaoapply\\上海市2025年普通高校招生本科普通批次平行志愿院校专业组投档分数线.pdf";
-        println!("[DEBUG] open_file_dialog called, returning path: {}", pdf_path);
-        if std::path::Path::new(pdf_path).exists() {
-            println!("[DEBUG] PDF file exists, returning Some");
-            Ok(Some(FileDialogResult {
-                filePath: pdf_path.to_string(),
-            }))
-        } else {
-            println!("[DEBUG] PDF file NOT found!");
-            Err("Sample PDF not found at expected path".to_string())
+        use tauri_plugin_dialog::DialogExt;
+
+        let path = app
+            .dialog()
+            .file()
+            .add_filter("PDF 文件", &["pdf"])
+            .blocking_pick_file();
+
+        match path {
+            Some(file_path) => Ok(Some(FileDialogResult {
+                filePath: file_path.to_string(),
+            })),
+            None => Ok(None),
         }
     }
 }
@@ -1016,6 +1347,8 @@ pub fn run() {
             commands::delete_skill_file,
             commands::get_gaokao_data,
             commands::save_gaokao_data,
+            commands::list_gaokao_data,
+            commands::delete_gaokao_data,
             commands::get_local_rank,
             commands::import_pdf_cutoffs,
             commands::open_file_dialog,

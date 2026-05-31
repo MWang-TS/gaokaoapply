@@ -1,4 +1,4 @@
-export type View = "chat" | "settings" | "skills" | "mcp" | "data" | "about";
+export type View = "chat" | "settings" | "skills" | "mcp" | "data" | "cutoffs" | "about";
 export type Role = "user" | "assistant" | "system";
 export type Theme = "light" | "dark";
 
@@ -90,4 +90,6 @@ export interface PdfCutoffData {
   province: string;
   note?: string;
   data: PdfCutoffEntry[];
+  raw_text_sample?: string;
+  parse_warning?: string;
 }

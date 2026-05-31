@@ -66,15 +66,26 @@ type CutoffEntry = {
   bonus?: number;
 };
 
-const CUTOFFS: CutoffEntry[] = (cutoffsData as { data: CutoffEntry[] }).data;
+type GaokaoDatabase = {
+  key: string;       // storage key = sanitized filename stem
+  title: string;
+  year: number;
+  province: string;
+  note?: string;
+  data: CutoffEntry[];
+};
 
-function queryCutoffs(args: Record<string, unknown>): string {
+const BUILTIN_CUTOFFS: CutoffEntry[] = (cutoffsData as { data: CutoffEntry[] }).data;
+
+function queryCutoffs(databases: GaokaoDatabase[], args: Record<string, unknown>): string {
+  // Flatten all databases; fall back to built-in data when no databases are loaded
+  const cutoffs = databases.length > 0 ? databases.flatMap((db) => db.data) : BUILTIN_CUTOFFS;
   const score = args.score as number | undefined;
   const keyword = (args.name as string | undefined)?.trim();
 
   // Search by college name keyword
   if (keyword && !score) {
-    const matches = CUTOFFS.filter((e) =>
+    const matches = cutoffs.filter((e) =>
       e.name.includes(keyword) || e.code === keyword
     );
     if (matches.length === 0) {
@@ -89,11 +100,11 @@ function queryCutoffs(args: Record<string, unknown>): string {
 
   // Search by score: return colleges where cutoff <= score
   if (score !== undefined) {
-    const eligible = CUTOFFS.filter(
+    const eligible = cutoffs.filter(
       (e) => typeof e.cutoff === "number" && e.cutoff <= score
     ) as (CutoffEntry & { cutoff: number })[];
     // Also list 580+ schools as "需要580分以上"
-    const above580 = CUTOFFS.filter((e) => e.cutoff === "580分及以上");
+    const above580 = cutoffs.filter((e) => e.cutoff === "580分及以上");
 
     // Sort by cutoff descending (highest competitive ones first)
     eligible.sort((a, b) => b.cutoff - a.cutoff);
@@ -169,6 +180,14 @@ export default function App() {
   const [mcpTools, setMcpTools] = useState<McpTool[]>([]);
   const [toolCallStatus, setToolCallStatus] = useState<string | null>(null);
   const initialized = useRef(false);
+  // Databases ref — list of all imported gaokao databases; empty until loaded from disk
+  const databasesRef = useRef<GaokaoDatabase[]>([]);
+  const [databases, setDatabases] = useState<GaokaoDatabase[]>([]);
+
+  const updateDatabases = useCallback((dbs: GaokaoDatabase[]) => {
+    databasesRef.current = dbs;
+    setDatabases(dbs);
+  }, []);
 
   const allSkills = [...BUILTIN_SKILLS, ...customSkills];
 
@@ -198,8 +217,28 @@ export default function App() {
       } catch {
         /* start fresh */
       }
+
+      // Load all gaokao databases from app data dir
+      try {
+        type DbMeta = { key: string; title: string; year: number; province: string; count: number };
+        const metas = await invoke<DbMeta[]>("list_gaokao_data");
+        const loaded: GaokaoDatabase[] = [];
+        for (const meta of metas) {
+          try {
+            const stored = await invoke<{ title: string; year: number; province: string; note?: string; data: CutoffEntry[] }>(
+              "get_gaokao_data", { dataType: meta.key }
+            );
+            if (stored && Array.isArray(stored.data) && stored.data.length > 0) {
+              loaded.push({ key: meta.key, title: stored.title || meta.title, year: stored.year || meta.year, province: stored.province || meta.province, note: stored.note, data: stored.data });
+            }
+          } catch { /* skip */ }
+        }
+        if (loaded.length > 0) updateDatabases(loaded);
+      } catch {
+        /* no stored databases */
+      }
     })();
-  }, []);
+  }, [updateDatabases]);
 
   // Load MCP tools when mcpServers config actually changes (not on every settings ref change)
   const mcpServersKey = JSON.stringify(
@@ -449,7 +488,7 @@ export default function App() {
                     year: (parsedArgs.year as string | undefined) ?? "2025",
                   });
                 } else if (call.name === "query_college_cutoffs") {
-                  result = queryCutoffs(parsedArgs);
+                  result = queryCutoffs(databasesRef.current, parsedArgs);
                 } else {
                   result = JSON.stringify({ error: `未知本地工具: ${call.name}` });
                 }
@@ -579,7 +618,7 @@ export default function App() {
           />
           <NavIcon
             icon="📊"
-            label="高考数据"
+            label="招生数据"
             active={view === "data"}
             onClick={() => setView("data")}
           />
@@ -711,7 +750,7 @@ export default function App() {
           />
         )}
         {view === "data" && (
-          <DataView schools={shanghaiSchools as GaokaoSchool[]} />
+          <CutoffsView databases={databases} onDatabasesChanged={updateDatabases} />
         )}
         {view === "about" && <AboutView />}
       </main>
@@ -1545,8 +1584,7 @@ function McpView({
 }
 
 // ─── Data view ─────────────────────────────────────────────────────────────
-function DataView({ schools }: { schools: GaokaoSchool[] }) {
-  const [search, setSearch] = useState("");
+function DataView({ schools }: { schools: GaokaoSchool[] }) {  const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("全部");
   const [filter985, setFilter985] = useState(false);
   const [filter211, setFilter211] = useState(false);
@@ -1554,14 +1592,6 @@ function DataView({ schools }: { schools: GaokaoSchool[] }) {
     null
   );
   const [scoreFilter, setScoreFilter] = useState<number | null>(null);
-  // PDF Import states
-  const [importing, setImporting] = useState(false);
-  const [importProgress, setImportProgress] = useState("");
-  const [importError, setImportError] = useState<string | null>(null);
-  const [importPreview, setImportPreview] = useState<PdfCutoffEntry[] | null>(null);
-  const [importTitle, setImportTitle] = useState("");
-  const [importYear, setImportYear] = useState(2025);
-  const [importProvince, setImportProvince] = useState("上海");
 
   const types = ["全部", ...Array.from(new Set(schools.map((s) => s.type)))];
 
@@ -1581,199 +1611,6 @@ function DataView({ schools }: { schools: GaokaoSchool[] }) {
       );
     return matchSearch && matchType && match985 && match211 && matchScore;
   });
-
-  // PDF Import handler
-  const handleImportPdf = async () => {
-    console.log("Import PDF button clicked");
-    try {
-      setImporting(true);
-      setImportError(null);
-      setImportProgress("正在选择文件...");
-
-      // Open file picker via Tauri
-      console.log("Calling open_file_dialog...");
-      const selected = await invoke<{ filePath: string } | null>("open_file_dialog", {
-        filters: [{ name: "PDF", extensions: ["pdf"] }],
-        multiple: false,
-      });
-      console.log("open_file_dialog result:", selected);
-
-      if (!selected) {
-        console.log("selected is falsy, returning early");
-        setImporting(false);
-        return;
-      }
-      if (!selected.filePath) {
-        console.log("selected.filePath is falsy, returning early. filePath:", selected.filePath);
-        setImporting(false);
-        return;
-      }
-
-      setImportProgress("正在解析 PDF，请稍候...");
-
-      // Call Rust backend to parse PDF
-      console.log("Calling import_pdf_cutoffs with path:", selected.filePath);
-      const result = await invoke<PdfCutoffData>("import_pdf_cutoffs", {
-        pdfPath: selected.filePath,
-        year: importYear,
-        province: importProvince,
-      });
-      console.log("import_pdf_cutoffs result:", result);
-
-      setImportTitle(result.title);
-      setImportPreview(result.data);
-      setImportProgress("");
-    } catch (err) {
-      console.error("PDF import error:", err);
-      setImportError(String(err));
-      setImporting(false);
-    }
-  };
-
-  const handleConfirmImport = async () => {
-    if (!importPreview) return;
-
-    try {
-      setImporting(true);
-      setImportProgress("正在保存数据...");
-
-      // Save to gaokao data file
-      await invoke("save_gaokao_data", {
-        dataType: "shanghai_2025_cutoffs",
-        data: {
-          title: importTitle,
-          year: importYear,
-          province: importProvince,
-          note: importPreview.length > 0 ? "由 PDF 导入生成" : "",
-          data: importPreview,
-        },
-      });
-
-      // Close preview and reload page to reflect changes
-      setImportPreview(null);
-      setImportTitle("");
-      window.location.reload(); // Simple refresh to reload data
-    } catch (err) {
-      setImportError(String(err));
-      setImporting(false);
-    }
-  };
-
-  const handleCancelImport = () => {
-    setImportPreview(null);
-    setImportError(null);
-  };
-
-  // Import preview modal
-  if (importPreview !== null) {
-    return (
-      <div className="import-modal-overlay" onClick={handleCancelImport}>
-        <div className="import-modal-content" onClick={(e) => e.stopPropagation()}>
-          <div className="panel-header">
-            <div>
-              <h2>📄 PDF 导入预览</h2>
-              <p style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>
-                {importTitle}
-              </p>
-            </div>
-          </div>
-
-          <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-color)" }}>
-            <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-              <label style={{ fontSize: 13 }}>
-                年份：
-                <input
-                  type="number"
-                  className="form-input"
-                  style={{ width: 80 }}
-                  value={importYear}
-                  onChange={(e) => setImportYear(parseInt(e.target.value) || 2025)}
-                />
-              </label>
-              <label style={{ fontSize: 13 }}>
-                省份：
-                <input
-                  className="form-input"
-                  style={{ width: 120 }}
-                  value={importProvince}
-                  onChange={(e) => setImportProvince(e.target.value)}
-                />
-              </label>
-            </div>
-          </div>
-
-          {importError && (
-            <div style={{ padding: "12px 20px", background: "var(--bg-error)", color: "var(--color-error)", fontSize: 13 }}>
-              {importError}
-            </div>
-          )}
-
-          {importProgress && (
-            <div style={{ padding: "12px 20px", background: "var(--bg-info)", color: "var(--color-info)", fontSize: 13 }}>
-              {importProgress}
-            </div>
-          )}
-
-          <div style={{ padding: "16px 20px", maxHeight: 400, overflowY: "auto" }}>
-            <div style={{ marginBottom: 12, fontSize: 13, color: "var(--text-secondary)" }}>
-              解析到 {importPreview.length} 条记录。请确认数据格式正确：
-            </div>
-            <table className="data-table" style={{ fontSize: 12 }}>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>院校代码</th>
-                  <th>院校专业组</th>
-                  <th>投档线</th>
-                </tr>
-              </thead>
-              <tbody>
-                {importPreview.slice(0, 50).map((entry, idx) => (
-                  <tr key={idx}>
-                    <td>{idx + 1}</td>
-                    <td><code>{entry.code}</code></td>
-                    <td>{entry.name}</td>
-                    <td>
-                      {typeof entry.cutoff === "number"
-                        ? <strong>{entry.cutoff}分</strong>
-                        : <span style={{ color: "var(--color-warning)" }}>{entry.cutoff}</span>
-                      }
-                    </td>
-                  </tr>
-                ))}
-                {importPreview.length > 50 && (
-                  <tr>
-                    <td colSpan={4} style={{ textAlign: "center", color: "var(--text-secondary)" }}>
-                      ... 还有 {importPreview.length - 50} 条记录
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          <div style={{
-            padding: "12px 20px",
-            background: "var(--bg-secondary)",
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 8
-          }}>
-            <button className="btn btn-ghost" onClick={handleCancelImport}>
-              取消
-            </button>
-            <button
-              className="btn btn-primary"
-              onClick={handleConfirmImport}
-              disabled={importing || importPreview.length === 0}
-            >
-              {importing ? "⏳ 保存中..." : "✅ 确认导入"}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   if (selectedSchool) {
     return (
@@ -1920,14 +1757,6 @@ function DataView({ schools }: { schools: GaokaoSchool[] }) {
               清除
             </button>
           )}
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={handleImportPdf}
-            disabled={importing}
-            title="从 PDF 导入分数线数据"
-          >
-            {importing ? "⏳ 导入中..." : "📄 导入 PDF"}
-          </button>
         </div>
       </div>
 
@@ -1995,6 +1824,418 @@ function DataView({ schools }: { schools: GaokaoSchool[] }) {
   );
 }
 
+// ─── Cutoffs View ─────────────────────────────────────────────────────────
+// Built-in database entry (always available, cannot be deleted)
+const BUILTIN_DB: GaokaoDatabase = {
+  key: "__builtin__",
+  title: (cutoffsData as { title: string }).title,
+  year: (cutoffsData as { year: number }).year,
+  province: (cutoffsData as { province: string }).province,
+  note: (cutoffsData as { note?: string }).note,
+  data: BUILTIN_CUTOFFS,
+};
+
+function CutoffsView({
+  databases,
+  onDatabasesChanged,
+}: {
+  databases: GaokaoDatabase[];
+  onDatabasesChanged: (dbs: GaokaoDatabase[]) => void;
+}) {
+  // Always prepend the built-in database
+  const allDatabases: GaokaoDatabase[] = [BUILTIN_DB, ...databases];
+
+  const [selectedKey, setSelectedKey] = useState<string>("__builtin__");
+  const [search, setSearch] = useState("");
+  const [scoreMin, setScoreMin] = useState("");
+  const [scoreMax, setScoreMax] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importStep, setImportStep] = useState<"idle" | "dialog" | "extracting" | "parsing" | "done">("idle");
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importPreview, setImportPreview] = useState<PdfCutoffEntry[] | null>(null);
+  const [importRawText, setImportRawText] = useState<string | null>(null);
+  const [importParseWarning, setImportParseWarning] = useState<string | null>(null);
+  const [showRawText, setShowRawText] = useState(false);
+  const [importKey, setImportKey] = useState("");
+  const [importTitle, setImportTitle] = useState("");
+  const [importYear] = useState(2025);
+  const [importProvince] = useState("上海");
+
+  // Sync selectedKey when databases list changes
+  useEffect(() => {
+    if (!allDatabases.find((db) => db.key === selectedKey)) {
+      setSelectedKey("__builtin__");
+    }
+  }, [databases, selectedKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const selectedDb = allDatabases.find((db) => db.key === selectedKey) ?? BUILTIN_DB;
+
+  const filtered = selectedDb.data.filter((e) => {
+    const matchSearch = !search || e.name.includes(search) || e.code.includes(search);
+    const cutoffNum = typeof e.cutoff === "number" ? e.cutoff : null;
+    const matchMin = !scoreMin || (cutoffNum !== null && cutoffNum >= parseInt(scoreMin));
+    const matchMax = !scoreMax || (cutoffNum !== null && cutoffNum <= parseInt(scoreMax));
+    return matchSearch && matchMin && matchMax;
+  });
+
+  const handleImportPdf = async () => {
+    try {
+      setImporting(true);
+      setImportError(null);
+      setImportRawText(null);
+      setImportParseWarning(null);
+      setShowRawText(false);
+      setImportStep("dialog");
+
+      const selected = await invoke<{ filePath: string } | null>("open_file_dialog", {
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+        multiple: false,
+      });
+      if (!selected?.filePath) { setImporting(false); setImportStep("idle"); return; }
+
+      // Derive storage key from filename stem
+      const stem = selected.filePath.split(/[/\\]/).pop()?.replace(/\.pdf$/i, "") ?? "imported";
+      const key = stem.replace(/[\\/:*?"<>|]/g, "_");
+      setImportKey(key);
+
+      setImportStep("extracting");
+      // Small yield so React re-renders the step indicator before the blocking call
+      await new Promise((r) => setTimeout(r, 40));
+
+      const result = await invoke<PdfCutoffData>("import_pdf_cutoffs", {
+        pdfPath: selected.filePath,
+        year: importYear,
+        province: importProvince,
+      });
+
+      setImportStep("parsing");
+      await new Promise((r) => setTimeout(r, 40));
+
+      setImportTitle(result.title || stem);
+      setImportRawText(result.raw_text_sample ?? null);
+      setImportParseWarning(result.parse_warning ?? null);
+
+      if (result.data.length === 0) {
+        setImportError(result.parse_warning ?? "未能从PDF中解析出分数线数据");
+      } else {
+        setImportPreview(result.data);
+      }
+      setImportStep("done");
+      setImporting(false);
+    } catch (err) {
+      setImportError(String(err));
+      setImportStep("idle");
+      setImporting(false);
+    }
+  };
+
+  const handleConfirmImport = async () => {
+    if (!importPreview) return;
+    try {
+      setImporting(true);
+      await invoke("save_gaokao_data", {
+        dataType: importKey,
+        data: { title: importTitle, year: importYear, province: importProvince, note: "由 PDF 导入生成", data: importPreview },
+      });
+      const newDb: GaokaoDatabase = { key: importKey, title: importTitle, year: importYear, province: importProvince, note: "由 PDF 导入生成", data: importPreview };
+      const updated = databases.filter((db) => db.key !== importKey).concat(newDb);
+      onDatabasesChanged(updated);
+      setSelectedKey(importKey);
+      setImportPreview(null);
+      setImportTitle("");
+      setImportKey("");
+      setImporting(false);
+    } catch (err) {
+      setImportError(String(err));
+      setImporting(false);
+    }
+  };
+
+  const handleCancelImport = () => {
+    setImportPreview(null);
+    setImportError(null);
+    setImportRawText(null);
+    setImportParseWarning(null);
+    setShowRawText(false);
+    setImportStep("idle");
+    setImporting(false);
+  };
+
+  const handleDeleteDb = async (key: string) => {
+    try {
+      await invoke("delete_gaokao_data", { dataType: key });
+      const updated = databases.filter((db) => db.key !== key);
+      onDatabasesChanged(updated);
+    } catch (err) {
+      console.error("删除数据库失败:", err);
+    }
+  };
+
+  // ── Step progress view (while importing) ──
+  if (importing) {
+    const steps: { key: typeof importStep; label: string; icon: string }[] = [
+      { key: "dialog",     label: "选择文件",  icon: "📂" },
+      { key: "extracting", label: "提取文本",  icon: "📄" },
+      { key: "parsing",    label: "解析数据",  icon: "🔍" },
+      { key: "done",       label: "完成",      icon: "✅" },
+    ];
+    const stepOrder = ["dialog", "extracting", "parsing", "done"];
+    const currentIdx = stepOrder.indexOf(importStep);
+    return (
+      <div className="import-modal-overlay">
+        <div className="import-modal-content" style={{ maxWidth: 400, textAlign: "center" }}>
+          <div style={{ padding: "24px 28px 8px" }}>
+            <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 24 }}>📄 正在导入 PDF…</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0 }}>
+              {steps.map((s, i) => {
+                const done   = stepOrder.indexOf(s.key) < currentIdx;
+                const active = s.key === importStep;
+                return (
+                  <div key={s.key} style={{ display: "flex", alignItems: "center" }}>
+                    <div style={{
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                      opacity: done || active ? 1 : 0.35,
+                    }}>
+                      <div style={{
+                        width: 40, height: 40, borderRadius: "50%", display: "flex", alignItems: "center",
+                        justifyContent: "center", fontSize: 18,
+                        background: done ? "var(--color-success-bg, #f6ffed)" : active ? "var(--color-primary-bg, #e6f4ff)" : "var(--bg-secondary)",
+                        border: `2px solid ${done ? "var(--color-success, #52c41a)" : active ? "var(--color-primary, #1677ff)" : "var(--border-color)"}`,
+                        animation: active ? "pulse 1s ease-in-out infinite" : undefined,
+                      }}>
+                        {done ? "✓" : s.icon}
+                      </div>
+                      <div style={{ fontSize: 11, color: active ? "var(--color-primary, #1677ff)" : "var(--text-secondary)", fontWeight: active ? 600 : 400, whiteSpace: "nowrap" }}>
+                        {s.label}
+                      </div>
+                    </div>
+                    {i < steps.length - 1 && (
+                      <div style={{ width: 32, height: 2, background: done ? "var(--color-success, #52c41a)" : "var(--border-color)", margin: "0 2px", marginBottom: 22, flexShrink: 0 }} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ padding: "12px 28px 24px", fontSize: 12, color: "var(--text-secondary)" }}>
+            {importStep === "dialog" && "等待选择文件…"}
+            {importStep === "extracting" && "正在从 PDF 中提取文本，GBK 编码 PDF 可能需要几秒…"}
+            {importStep === "parsing" && "正在解析分数线数据…"}
+            {importStep === "done" && "处理完成"}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Import result / error modal ──
+  if (importPreview !== null || importError !== null) {
+    const hasParseWarning = !!importParseWarning;
+    return (
+      <div className="import-modal-overlay" onClick={handleCancelImport}>
+        <div className="import-modal-content" style={{ maxWidth: 760 }} onClick={(e) => e.stopPropagation()}>
+          <div className="panel-header">
+            <div>
+              <h2>📄 PDF 导入{importError && !importPreview ? "失败" : "预览"}</h2>
+              {importTitle && (
+                <p style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>{importTitle}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Step summary bar */}
+          <div style={{ padding: "8px 20px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-color)", fontSize: 12, display: "flex", gap: 16, color: "var(--text-secondary)" }}>
+            <span>✓ 文件已选择</span>
+            <span>✓ 文本已提取</span>
+            {importError ? <span style={{ color: "var(--color-error, #cf1322)" }}>✗ 解析失败</span> : <span>✓ 解析到 <strong>{importPreview?.length ?? 0}</strong> 条记录</span>}
+          </div>
+
+          {importError && (
+            <div style={{ padding: "16px 20px", background: "var(--bg-error, #fff2f0)", color: "var(--color-error, #cf1322)", fontSize: 13, margin: "16px 20px", borderRadius: 4, border: "1px solid var(--border-error, #ffccc7)" }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>❌ 解析失败</div>
+              <div>{importError}</div>
+            </div>
+          )}
+
+          {/* Raw text debug section */}
+          {importRawText && (
+            <div style={{ margin: "0 20px 8px" }}>
+              <button
+                className="btn btn-ghost"
+                style={{ fontSize: 12, padding: "3px 10px" }}
+                onClick={() => setShowRawText((v) => !v)}
+              >
+                {showRawText ? "▲ 隐藏原始文本" : "▼ 查看提取的原始文本"}
+                {hasParseWarning && <span style={{ marginLeft: 8, color: "var(--color-warning, #faad14)" }}>（用于调试解析问题）</span>}
+              </button>
+              {showRawText && (
+                <pre style={{
+                  marginTop: 8, padding: 12, background: "var(--bg-code, #1e1e1e)", color: "var(--color-code, #d4d4d4)",
+                  fontSize: 11, lineHeight: 1.5, borderRadius: 4, maxHeight: 300, overflowY: "auto",
+                  whiteSpace: "pre-wrap", wordBreak: "break-all", fontFamily: "monospace",
+                }}>
+                  {importRawText}
+                </pre>
+              )}
+            </div>
+          )}
+
+          {importPreview !== null && (
+            <div style={{ padding: "8px 20px 16px", maxHeight: 380, overflowY: "auto" }}>
+              <div style={{ marginBottom: 10, fontSize: 13, color: "var(--text-secondary)" }}>
+                解析到 <strong>{importPreview.length}</strong> 条记录 · 将保存为数据库「{importTitle}」
+              </div>
+              <table className="data-table" style={{ fontSize: 12 }}>
+                <thead><tr><th>#</th><th>院校代码</th><th>院校专业组</th><th>投档线</th></tr></thead>
+                <tbody>
+                  {importPreview.slice(0, 50).map((entry, idx) => (
+                    <tr key={idx}>
+                      <td>{idx + 1}</td>
+                      <td><code>{entry.code}</code></td>
+                      <td>{entry.name}</td>
+                      <td>{typeof entry.cutoff === "number"
+                        ? <strong>{entry.cutoff}分</strong>
+                        : <span style={{ color: "var(--color-warning)" }}>{entry.cutoff}</span>}
+                      </td>
+                    </tr>
+                  ))}
+                  {importPreview.length > 50 && (
+                    <tr><td colSpan={4} style={{ textAlign: "center", color: "var(--text-secondary)" }}>
+                      … 还有 {importPreview.length - 50} 条记录
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div style={{ padding: "12px 20px", background: "var(--bg-secondary)", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn btn-ghost" onClick={handleCancelImport}>{importPreview ? "取消" : "关闭"}</button>
+            {importPreview !== null && (
+              <button className="btn btn-primary" onClick={handleConfirmImport} disabled={importing || importPreview.length === 0}>
+                {importing ? "⏳ 保存中..." : "✅ 确认导入"}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main layout: left sidebar + right table ──
+  return (
+    <div className="panel-view" style={{ display: "flex", flexDirection: "row", overflow: "hidden", padding: 0 }}>
+      {/* Left sidebar: database list */}
+      <div style={{ width: 220, minWidth: 160, borderRight: "1px solid var(--border-color)", display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0 }}>
+        <div style={{ padding: "12px 14px 8px", borderBottom: "1px solid var(--border-color)" }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>📚 数据库列表</div>
+          <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 2 }}>内置 1 个 + 已导入 {databases.length} 个</div>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {allDatabases.map((db) => (
+            <div
+              key={db.key}
+              style={{
+                padding: "9px 10px 9px 12px",
+                cursor: "pointer",
+                background: selectedKey === db.key ? "var(--bg-active, #e6f4ff)" : undefined,
+                borderLeft: selectedKey === db.key ? "3px solid var(--color-primary, #1677ff)" : "3px solid transparent",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 4,
+              }}
+              onClick={() => setSelectedKey(db.key)}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 500, lineHeight: 1.35, wordBreak: "break-all" }}>
+                  {db.key === "__builtin__" && <span style={{ fontSize: 10, background: "var(--color-primary, #1677ff)", color: "#fff", borderRadius: 3, padding: "1px 4px", marginRight: 4 }}>内置</span>}
+                  {db.title}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 2 }}>
+                  {db.data.length} 条 · {db.province} {db.year}
+                </div>
+              </div>
+              {db.key !== "__builtin__" && (
+                <button
+                  style={{ fontSize: 12, padding: "1px 3px", background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", opacity: 0.5, flexShrink: 0 }}
+                  title="删除此数据库"
+                  onClick={(ev) => { ev.stopPropagation(); handleDeleteDb(db.key); }}
+                >🗑</button>
+              )}
+            </div>
+          ))}
+        </div>
+        <div style={{ padding: 10, borderTop: "1px solid var(--border-color)" }}>
+          <button className="btn btn-primary" style={{ width: "100%", fontSize: 13 }} onClick={handleImportPdf} disabled={importing}>
+            {importing ? "⏳ 导入中..." : "📄 导入 PDF"}
+          </button>
+        </div>
+      </div>
+
+      {/* Right panel */}
+      {(
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {/* Header */}
+          <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border-color)" }}>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>{selectedDb.title}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 3, display: "flex", gap: 14 }}>
+              <span>共 {selectedDb.data.length} 条</span>
+              <span>数字投档线 {selectedDb.data.filter((e) => typeof e.cutoff === "number").length} 条</span>
+              <span>580分及以上 {selectedDb.data.filter((e) => typeof e.cutoff === "string").length} 条</span>
+            </div>
+          </div>
+          {/* Filters */}
+          <div style={{ padding: "8px 14px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid var(--border-color)" }}>
+            <input className="form-input" style={{ flex: 1, minWidth: 130 }} placeholder="搜索院校名称或代码..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 13 }}>
+              <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>投档线</span>
+              <input className="form-input" type="number" style={{ width: 66 }} placeholder="最低" value={scoreMin} onChange={(e) => setScoreMin(e.target.value)} />
+              <span style={{ color: "var(--text-secondary)" }}>~</span>
+              <input className="form-input" type="number" style={{ width: 66 }} placeholder="最高" value={scoreMax} onChange={(e) => setScoreMax(e.target.value)} />
+              {(search || scoreMin || scoreMax) && (
+                <button className="btn-ghost btn-sm" onClick={() => { setSearch(""); setScoreMin(""); setScoreMax(""); }}>清除</button>
+              )}
+            </div>
+            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>显示 {filtered.length} / {selectedDb.data.length}</span>
+          </div>
+          {/* Table */}
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 46 }}>#</th>
+                  <th style={{ width: 86 }}>院校代码</th>
+                  <th>院校专业组</th>
+                  <th style={{ width: 100 }}>投档线</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((entry, idx) => (
+                  <tr key={entry.code + idx}>
+                    <td style={{ color: "var(--text-secondary)", fontSize: 12 }}>{idx + 1}</td>
+                    <td><code style={{ fontSize: 12 }}>{entry.code}</code></td>
+                    <td>{entry.name}</td>
+                    <td>
+                      {typeof entry.cutoff === "number" ? (
+                        <span style={{ fontWeight: 600, color: "var(--color-primary, #1677ff)" }}>{entry.cutoff} 分</span>
+                      ) : (
+                        <span style={{ color: "var(--color-warning, #d46b08)", fontSize: 12 }}>{entry.cutoff}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr><td colSpan={4} style={{ textAlign: "center", padding: 24, color: "var(--text-secondary)" }}>没有匹配的记录</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── About View ───────────────────────────────────────────────────────────
 function AboutView() {
   return (
@@ -2005,7 +2246,7 @@ function AboutView() {
         <span style={{ fontSize: 48 }}>🎓</span>
         <div>
           <div style={{ fontSize: 20, fontWeight: 700 }}>高考报志愿助手</div>
-          <div style={{ color: "var(--text-secondary)", marginTop: 4 }}>版本 v0.0.1</div>
+          <div style={{ color: "var(--text-secondary)", marginTop: 4 }}>版本 v0.0.2</div>
         </div>
       </div>
 
